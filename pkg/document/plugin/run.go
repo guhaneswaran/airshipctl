@@ -16,6 +16,7 @@ package plugin
 
 import (
 	"io"
+	"opendev.org/airship/airshipctl/pkg/document/plugin/sops"
 
 	"sigs.k8s.io/yaml"
 
@@ -34,6 +35,7 @@ var Registry = make(map[schema.GroupVersionKind]types.Factory)
 func init() {
 	replacement.RegisterPlugin(Registry)
 	templater.RegisterPlugin(Registry)
+	sops.RegisterPlugin(Registry)
 }
 
 // ConfigureAndRun executes particular plugin based on group, version, kind

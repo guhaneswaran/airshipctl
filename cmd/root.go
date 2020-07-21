@@ -66,7 +66,7 @@ func AddDefaultAirshipCTLCommands(cmd *cobra.Command, settings *environment.Airs
 	cmd.AddCommand(document.NewDocumentCommand(settings))
 	cmd.AddCommand(config.NewConfigCommand(settings))
 	cmd.AddCommand(image.NewImageCommand(settings))
-	cmd.AddCommand(secret.NewSecretCommand())
+	cmd.AddCommand(secret.NewSecretCommand(settings))
 	cmd.AddCommand(phase.NewPhaseCommand(settings))
 
 	return cmd

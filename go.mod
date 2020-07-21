@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/Masterminds/sprig v2.22.0+incompatible
+	github.com/alokmenghrajani/gpgeez v0.0.0-20161206084504-1a06f1c582f9
 	github.com/chai2010/gettext-go v0.0.0-20170215093142-bf70f2a70fb1 // indirect
 	github.com/docker/docker v1.4.2-0.20200203170920-46ec8731fbce
 	github.com/docker/spdystream v0.0.0-20181023171402-6480d4af844c // indirect
@@ -16,10 +17,15 @@ require (
 	github.com/gregjones/httpcache v0.0.0-20190212212710-3befbb6ad0cc // indirect
 	github.com/huandu/xstrings v1.3.1 // indirect
 	github.com/metal3-io/baremetal-operator v0.0.0-20200501205115-2c0dc9997bfa
+	github.com/monopole/sopsencodedsecrets v0.0.0-20190703185602-44c03958d11f // indirect
 	github.com/onsi/gomega v1.9.0
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v0.0.6
 	github.com/stretchr/testify v1.4.0
+	go.mozilla.org/sops v0.0.0-20190912205235-14a22d7a7060 // indirect
+	go.mozilla.org/sops/v3 v3.6.0
+	golang.org/x/crypto v0.0.0-20200302210943-78000ba7a073
+	gopkg.in/alecthomas/kingpin.v2 v2.2.6
 	k8s.io/api v0.17.4
 	k8s.io/apiextensions-apiserver v0.17.4
 	k8s.io/apimachinery v0.17.4

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Run this from the airshipctl project root
-set -e
+set -ex
 
 # This script builds a version of kustomize that is able to acces
 # the ReplacementTransformer plugin.
@@ -39,6 +39,15 @@ cat > ${PLUGIN_PATH}/ReplacementTransformer <<EOF
 \$(dirname \$0)/airshipctl document plugin "\$@"
 EOF
 chmod +x ${PLUGIN_PATH}/ReplacementTransformer
+cp -p ${AIRSHIPCTL} ${PLUGIN_PATH}/
+
+PLUGIN_PATH=${KUSTOMIZE_PLUGIN_HOME}/airshipit.org/v1alpha1/sops
+mkdir -p ${PLUGIN_PATH}
+cat > ${PLUGIN_PATH}/Sops <<EOF
+#!/bin/bash
+\$(dirname \$0)/airshipctl document plugin "\$@"
+EOF
+chmod +x ${PLUGIN_PATH}/Sops
 cp -p ${AIRSHIPCTL} ${PLUGIN_PATH}/
 
 # tell the user how to use this
