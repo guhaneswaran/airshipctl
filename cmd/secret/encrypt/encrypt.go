@@ -95,7 +95,7 @@ func encryptSecret(rootSettings *environment.AirshipCTLSettings, factory client.
 	}
 
 	kclient, err := factory(rootSettings)
-	priKeyFileName := fmt.Sprintf("%s/%s.pri", keyOutputDir, gpgkeyFileName)
+	priKeyFileName := fmt.Sprintf("%s%s.pri", keyOutputDir, gpgkeyFileName)
 	//pubKeyFileName := fmt.Sprintf("/tmp/gpg/%s.pub", "docker-test")
 
 	var pubKeyBytes, privKeyBytes []byte
@@ -217,7 +217,7 @@ func generateKeyPair(name string, dstDir string) ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 
-	priKeyFilename := fmt.Sprintf("%s/%s.pri", dstDir, name)
+	priKeyFilename := fmt.Sprintf("%s%s.pri", dstDir, name)
 	privateKey, err := key.ArmorPrivate(&Config{})
 	if err != nil {
 		return nil, nil, err
@@ -232,7 +232,7 @@ func generateKeyPair(name string, dstDir string) ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 
-	pubKeyFilename := fmt.Sprintf("%s/%s.pub", dstDir, name)
+	pubKeyFilename := fmt.Sprintf("%s%s.pub", dstDir, name)
 	publicKey, err := key.Armor()
 	if err != nil {
 		return nil, nil, err

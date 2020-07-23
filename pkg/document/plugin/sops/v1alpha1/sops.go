@@ -83,7 +83,7 @@ func (s *Sops) Run(_ io.Reader, out io.Writer) error {
 	}
 	fmt.Println("2.")
 
-	priKeyFileName := fmt.Sprintf("%s/%s.pri", keyOutputDir, gpgSecretName)
+	priKeyFileName := fmt.Sprintf("%s%s.pri", keyOutputDir, gpgSecretName)
 
 	secret, err := kclient.ClientSet().CoreV1().Secrets(ns).Get(gpgSecretName, metav1.GetOptions{})
 	if err != nil {

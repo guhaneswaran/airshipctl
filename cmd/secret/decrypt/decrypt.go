@@ -95,7 +95,7 @@ func decryptSecret(rootSettings *environment.AirshipCTLSettings, factory client.
 		return err
 	}
 
-	priKeyFileName := fmt.Sprintf("%s/%s.pri", keyOutputDir, gpgkeyFileName)
+	priKeyFileName := fmt.Sprintf("%s%s.pri", keyOutputDir, gpgkeyFileName)
 	//pubKeyFileName := fmt.Sprintf("/tmp/gpg/%s.pub", "docker-test")
 
 	secret, err := kclient.ClientSet().CoreV1().Secrets(ns).Get(gpgSecretName, metav1.GetOptions{})
