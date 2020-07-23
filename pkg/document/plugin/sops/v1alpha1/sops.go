@@ -18,17 +18,18 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"golang.org/x/crypto/openpgp"
-	"golang.org/x/crypto/openpgp/armor"
-	"golang.org/x/crypto/openpgp/packet"
-	yaml2 "sigs.k8s.io/yaml"
 	"io/ioutil"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"opendev.org/airship/airshipctl/pkg/environment"
-	"opendev.org/airship/airshipctl/pkg/k8s/client"
 	"os"
 	"os/exec"
 	"time"
+
+	"golang.org/x/crypto/openpgp"
+	"golang.org/x/crypto/openpgp/armor"
+	"golang.org/x/crypto/openpgp/packet"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"opendev.org/airship/airshipctl/pkg/environment"
+	"opendev.org/airship/airshipctl/pkg/k8s/client"
+	yaml2 "sigs.k8s.io/yaml"
 
 	"go.mozilla.org/sops/v3"
 	"go.mozilla.org/sops/v3/aes"
@@ -37,10 +38,19 @@ import (
 	"go.mozilla.org/sops/v3/keyservice"
 	"go.mozilla.org/sops/v3/pgp"
 
-	"go.mozilla.org/sops/v3/stores/yaml"
 	"io"
+
+	"go.mozilla.org/sops/v3/stores/yaml"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	plugtypes "opendev.org/airship/airshipctl/pkg/document/plugin/types"
+)
+
+var (
+	tmpFile        = "/tmp/docker-test-decrypted.yaml"
+	keyOutputDir   = "/tmp/gpg/"
+	gpgkeyFileName = "gpg-key"
+	gpgSecretName  = "gpg-encryption-key"
+	ns             = "kube-system"
 )
 
 // GetGVK returns group, version, kind object used to register version
@@ -66,29 +76,46 @@ func New(settings *environment.AirshipCTLSettings, cfg []byte) (plugtypes.Plugin
 
 // Run sops plugin
 func (s *Sops) Run(_ io.Reader, out io.Writer) error {
+	fmt.Println("1.")
 	kclient, err := client.DefaultClient(s.settings)
 	if err != nil {
 		return err
 	}
+	fmt.Println("2.")
 
-	priKeyFileName := fmt.Sprintf("/tmp/gpg/%s.pri", "docker-test")
+	priKeyFileName := fmt.Sprintf("%s/%s.pri", keyOutputDir, gpgSecretName)
 
-	secret, err := kclient.ClientSet().CoreV1().Secrets("kube-system").Get("gpg-encryption-key", metav1.GetOptions{})
+	secret, err := kclient.ClientSet().CoreV1().Secrets(ns).Get(gpgSecretName, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
+
+	fmt.Println("3.")
 
 	err = ioutil.WriteFile(priKeyFileName, secret.Data["pri_key"], 0644)
 	if err != nil {
 		return err
 	}
 
+	fmt.Println("4.")
+
+	fmt.Println("5.")
+
 	defer func() {
 		os.Remove(priKeyFileName)
 	}()
 
+	fmt.Println("6.")
+
 	gpgCmd := exec.Command("gpg", "--import", priKeyFileName)
+	var stdOut, errOut bytes.Buffer
+	gpgCmd.Stdout = &stdOut
+	gpgCmd.Stderr = &errOut
 	err = gpgCmd.Run()
+
+	fmt.Println(err)
+	fmt.Println("1. ", string(errOut.Bytes()))
+	fmt.Println("2. ", string(stdOut.Bytes()))
 
 	keySvc := keyservice.NewLocalClient()
 	tree, err := common.LoadEncryptedFileWithBugFixes(common.GenericDecryptOpts{
@@ -110,13 +137,13 @@ func (s *Sops) Run(_ io.Reader, out io.Writer) error {
 		return err
 	}
 
-	dstStore := common.DefaultStoreForPath("/tmp/docker-test-decrypted.yaml")
+	dstStore := common.DefaultStoreForPath(tmpFile)
 	output, err := dstStore.EmitPlainFile(tree.Branches)
 	if err != nil {
 		return err
 	}
 
-	err = ioutil.WriteFile("/tmp/docker-test-decrypted.yaml", output, 0644)
+	err = ioutil.WriteFile(tmpFile, output, 0644)
 	if err != nil {
 		return err
 	}
@@ -130,7 +157,6 @@ func (s *Sops) Run(_ io.Reader, out io.Writer) error {
 	// TODO: Add test cases
 	return nil
 }
-
 
 // Config for generating keys.
 type Config struct {
