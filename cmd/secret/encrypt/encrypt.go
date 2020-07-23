@@ -19,14 +19,15 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
+	"os"
+	"os/exec"
+	"time"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"opendev.org/airship/airshipctl/pkg/environment"
 	"opendev.org/airship/airshipctl/pkg/k8s/client"
-	"os"
-	"os/exec"
-	"time"
 
 	"github.com/spf13/cobra"
 	"go.mozilla.org/sops/v3/aes"
@@ -44,140 +45,170 @@ import (
 var (
 	keyOutputPrefix = "gpg-signing"
 	keyOutputDir    = "/tmp/gpg/"
+	gpgkeyFileName  = "gpg-key"
+	gpgSecretName   = "gpg-encryption-key"
+	ns              = "kube-system"
 )
 
-// NewGenerateCommand creates a new command for generating secret information
+const (
+	encryptLong = `	
+Encrypts the provided secret yaml file using SOPS 
+airshipctl secret encrypt --from-file <file-name> --to-file <file-name>
+`
+	encryptExample = `
+airshipctl secret encrypt --from-file /tmp/unencrypted-secret.yaml --to-file /tmp/encrypted-secret.yaml
+`
+)
+
+// NewEncryptCommand creates a new command for generating secret information
 func NewEncryptCommand(rootSettings *environment.AirshipCTLSettings, factory client.Factory) *cobra.Command {
-	generateRootCmd := &cobra.Command{
-		Use:   "encrypt",
-		Short: "Encrypt a Kubernetes secret object using sops",
+	var srcFile, dstFile string
+	encryptCmd := &cobra.Command{
+		Use:     "encrypt",
+		Short:   "Encrypt a Kubernetes secret object using sops",
+		Long:    encryptLong[1:],
+		Example: encryptExample,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Fprintln(cmd.OutOrStdout(), "running encrypt command")
-			kclient, err := factory(rootSettings)
+			err := encryptSecret(rootSettings, factory, srcFile, dstFile)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed encrypting secrets: %s", err.Error())
 			}
-
-			priKeyFileName := fmt.Sprintf("/tmp/gpg/%s.pri", "docker-test")
-			//pubKeyFileName := fmt.Sprintf("/tmp/gpg/%s.pub", "docker-test")
-
-			var pubKeyBytes, privKeyBytes []byte
-			secret, err := kclient.ClientSet().CoreV1().Secrets("kube-system").Get("gpg-encryption-key", metav1.GetOptions{})
-			if err != nil && !errors.IsNotFound(err) {
-				return err
-			} else if errors.IsNotFound(err) {
-				// generate key pair and save it as secret
-				pubKeyBytes, privKeyBytes, err = generateKeyPair("docker-test", "/tmp/gpg")
-				if err != nil {
-					return err
-				}
-				secret = &corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "gpg-encryption-key",
-					},
-					TypeMeta: metav1.TypeMeta{
-						Kind:       "Secret",
-						APIVersion: "v1",
-					},
-					Data: map[string][]byte{
-						"pub_key": pubKeyBytes,
-						"pri_key": privKeyBytes,
-					},
-				}
-				_, err = kclient.ClientSet().CoreV1().Secrets("kube-system").Create(secret)
-				if err != nil{
-					return err
-				}
-			}
-
-			err = writeFile(priKeyFileName, secret.Data["pri_key"])
-			if err != nil {
-				return err
-			}
-
-			defer func() {
-				os.Remove(priKeyFileName)
-			}()
-
-			gpgCmd := exec.Command("gpg", "--import", priKeyFileName)
-			var out, errOut bytes.Buffer
-			gpgCmd.Stdout = &out
-			gpgCmd.Stderr = &errOut
-			err = gpgCmd.Run()
-
-			fmt.Println(err)
-			fmt.Println("1. ", string(errOut.Bytes()))
-			fmt.Println("2. ", string(out.Bytes()))
-
-			groups, err := getKeyGroup(secret.Data["pub_key"])
-			if err != nil {
-				return err
-			}
-
-			srcFile := "/Users/alekhya/workspace/airship/sops/decrypted-secret.yaml"
-			DstFile := "/Users/alekhya/workspace/airship/sops/encrypted-secret.yaml"
-			store := common.DefaultStoreForPath(srcFile)
-
-			fileBytes, err := ioutil.ReadFile(srcFile)
-			if err != nil {
-				return fmt.Errorf("error reading file: %s", err)
-			}
-
-			branches, err := store.LoadPlainFile(fileBytes)
-			if err != nil {
-				return fmt.Errorf("error unmarshalling file: %s", err)
-			}
-
-			if err := ensureNoMetadata(branches[0]); err != nil {
-				return err
-			}
-
-			tree := sops.Tree{
-				Branches: branches,
-				Metadata: sops.Metadata{
-					KeyGroups:      groups,
-					Version:        "3.6.0",
-					EncryptedRegex: "^data",
-				},
-				FilePath: srcFile,
-			}
-
-
-			keySvc := keyservice.NewLocalClient()
-			dataKey, errors := tree.GenerateDataKeyWithKeyServices([]keyservice.KeyServiceClient{keySvc})
-			if len(errors) > 0 {
-				return fmt.Errorf("%s", errors)
-			}
-			err = common.EncryptTree(common.EncryptTreeOpts{
-				Tree:    &tree,
-				Cipher:  aes.NewCipher(),
-				DataKey: dataKey,
-			})
-			if err != nil {
-				return err
-			}
-
-			dstStore := common.DefaultStoreForPath(DstFile)
-			output, err := dstStore.EmitEncryptedFile(tree)
-			if err != nil {
-				return err
-			}
-
-			err = ioutil.WriteFile(DstFile, output, 0644)
-			if err != nil {
-				return err
-			}
-
-			// TODO: Import encryption and decryption keys locally
-
-			// TODO: Run encrypt from the sops
-
-			// TODO: Add test cases
+			fmt.Fprint(os.Stdout, "successfully encrypted secrets\n")
 			return nil
 		},
 	}
 
-	return generateRootCmd
+	encryptCmd.Flags().StringVarP(&srcFile, "from-file", "f", "",
+		"(Unencrypted) Source secret file")
+	encryptCmd.Flags().StringVarP(&dstFile, "to-file", "t", "",
+		"SOPS encrypted secret file")
+
+	return encryptCmd
+}
+
+func encryptSecret(rootSettings *environment.AirshipCTLSettings, factory client.Factory, srcFile string, dstFile string) error {
+
+	err := validateFiles(srcFile, dstFile)
+	if err != nil {
+		return err
+	}
+
+	kclient, err := factory(rootSettings)
+	priKeyFileName := fmt.Sprintf("%s/%s.pri", keyOutputDir, gpgkeyFileName)
+	//pubKeyFileName := fmt.Sprintf("/tmp/gpg/%s.pub", "docker-test")
+
+	var pubKeyBytes, privKeyBytes []byte
+	secret, err := kclient.ClientSet().CoreV1().Secrets(ns).Get(gpgSecretName, metav1.GetOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	} else if errors.IsNotFound(err) {
+		// generate key pair and save it as secret
+		pubKeyBytes, privKeyBytes, err = generateKeyPair(gpgkeyFileName, keyOutputDir)
+		if err != nil {
+			return err
+		}
+		secret = &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: gpgSecretName,
+			},
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "Secret",
+				APIVersion: "v1",
+			},
+			Data: map[string][]byte{
+				"pub_key": pubKeyBytes,
+				"pri_key": privKeyBytes,
+			},
+		}
+		_, err = kclient.ClientSet().CoreV1().Secrets(ns).Create(secret)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = writeFile(priKeyFileName, secret.Data["pri_key"])
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		os.Remove(priKeyFileName)
+	}()
+
+	gpgCmd := exec.Command("gpg", "--import", priKeyFileName)
+	var out, errOut bytes.Buffer
+	gpgCmd.Stdout = &out
+	gpgCmd.Stderr = &errOut
+	err = gpgCmd.Run()
+
+	fmt.Println(err)
+	fmt.Println("1. ", string(errOut.Bytes()))
+	fmt.Println("2. ", string(out.Bytes()))
+
+	groups, err := getKeyGroup(secret.Data["pub_key"])
+	if err != nil {
+		return err
+	}
+
+	store := common.DefaultStoreForPath(srcFile)
+
+	fileBytes, err := ioutil.ReadFile(srcFile)
+	if err != nil {
+		return fmt.Errorf("error reading file: %s", err)
+	}
+
+	branches, err := store.LoadPlainFile(fileBytes)
+	if err != nil {
+		return fmt.Errorf("error unmarshalling file: %s", err)
+	}
+
+	if err := ensureNoMetadata(branches[0]); err != nil {
+		return err
+	}
+
+	tree := sops.Tree{
+		Branches: branches,
+		Metadata: sops.Metadata{
+			KeyGroups:      groups,
+			Version:        "3.6.0",
+			EncryptedRegex: "^data",
+		},
+		FilePath: srcFile,
+	}
+
+	keySvc := keyservice.NewLocalClient()
+	dataKey, errors := tree.GenerateDataKeyWithKeyServices([]keyservice.KeyServiceClient{keySvc})
+	if len(errors) > 0 {
+		return fmt.Errorf("%s", errors)
+	}
+	err = common.EncryptTree(common.EncryptTreeOpts{
+		Tree:    &tree,
+		Cipher:  aes.NewCipher(),
+		DataKey: dataKey,
+	})
+	if err != nil {
+		return err
+	}
+
+	dstStore := common.DefaultStoreForPath(dstFile)
+	output, err := dstStore.EmitEncryptedFile(tree)
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(dstFile, output, 0644)
+	if err != nil {
+		return err
+	}
+
+	// TODO: Import encryption and decryption keys locally
+
+	// TODO: Run encrypt from the sops
+
+	// TODO: Add test cases
+	return nil
+
 }
 
 func generateKeyPair(name string, dstDir string) ([]byte, []byte, error) {
@@ -241,6 +272,7 @@ const (
 	sha224    = 11
 )
 
+// CreateKey if not present
 func CreateKey(name, comment, email string, config *Config) (*Key, error) {
 	// Create the key
 	key, err := openpgp.NewEntity(name, comment, email, &config.Config)
@@ -324,14 +356,14 @@ func (key *Key) ArmorPrivate(config *Config) (string, error) {
 	return buf.String(), nil
 }
 
-// A keyring is simply one (or more) keys in binary format.
+// Keyring - A keyring is simply one (or more) keys in binary format.
 func (key *Key) Keyring() []byte {
 	buf := new(bytes.Buffer)
 	key.Serialize(buf)
 	return buf.Bytes()
 }
 
-// A secring is simply one (or more) keys in binary format.
+// Secring  A secring is simply one (or more) keys in binary format.
 func (key *Key) Secring(config *Config) []byte {
 	buf := new(bytes.Buffer)
 	c := config.Config
@@ -369,4 +401,19 @@ func ensureNoMetadata(branch sops.TreeBranch) error {
 
 func writeFile(path string, content []byte) error {
 	return ioutil.WriteFile(path, content, 0644)
+}
+
+func validateFiles(srcFile string, dstFile string) error {
+	if !(len(srcFile) == 0) && !(len(dstFile) == 0) {
+		if _, err := os.Stat(srcFile); os.IsNotExist(err) {
+			return fmt.Errorf(err.Error())
+		}
+		if _, err := os.Stat(dstFile); !os.IsNotExist(err) {
+			fmt.Fprint(os.Stdout, "Warning: Overriding "+dstFile+"\n")
+		}
+	} else {
+		return fmt.Errorf("Expecting from-file and to-file flags")
+	}
+
+	return nil
 }

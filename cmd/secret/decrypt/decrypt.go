@@ -18,17 +18,18 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"os/exec"
+	"time"
+
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/openpgp"
 	"golang.org/x/crypto/openpgp/armor"
 	"golang.org/x/crypto/openpgp/packet"
-	"io/ioutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"opendev.org/airship/airshipctl/pkg/environment"
 	"opendev.org/airship/airshipctl/pkg/k8s/client"
-	"os"
-	"os/exec"
-	"time"
 
 	"go.mozilla.org/sops/v3"
 	"go.mozilla.org/sops/v3/aes"
@@ -38,85 +39,127 @@ import (
 	"go.mozilla.org/sops/v3/pgp"
 )
 
+var (
+	keyOutputPrefix = "gpg-signing"
+	keyOutputDir    = "/tmp/gpg/"
+	gpgkeyFileName  = "gpg-key"
+	gpgSecretName   = "gpg-encryption-key"
+	ns              = "kube-system"
+)
+
+const (
+	decryptLong = `	
+Decrypts the provided secret yaml file using SOPS 
+airshipctl secret decrypt --from-file <file-name> --to-file <file-name>
+`
+	decryptExample = `
+airshipctl secret dncrypt --from-file /tmp/encrypted-secret.yaml --to-file /tmp/decrypted-secret.yaml
+`
+)
+
 // NewGenerateCommand creates a new command for generating secret information
 func NewDecryptCommand(rootSettings *environment.AirshipCTLSettings, factory client.Factory) *cobra.Command {
+	var srcFile, dstFile string
 	decryptCmd := &cobra.Command{
-		Use:   "decrypt",
-		Short: "Decrypt a Kubernetes secret object using sops",
+		Use:     "decrypt",
+		Short:   "Decrypt a Kubernetes secret object using sops",
+		Long:    decryptLong[1:],
+		Example: decryptExample,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			kclient, err := factory(rootSettings)
+			fmt.Fprintln(cmd.OutOrStdout(), "running decrypt command")
+			err := decryptSecret(rootSettings, factory, srcFile, dstFile)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed decrypting secrets: %s", err.Error())
 			}
-
-			priKeyFileName := fmt.Sprintf("/tmp/gpg/%s.pri", "docker-test")
-			//pubKeyFileName := fmt.Sprintf("/tmp/gpg/%s.pub", "docker-test")
-
-			secret, err := kclient.ClientSet().CoreV1().Secrets("kube-system").Get("gpg-encryption-key", metav1.GetOptions{})
-			if err != nil {
-				return err
-			}
-
-			err = ioutil.WriteFile(priKeyFileName, secret.Data["pri_key"], 0644)
-			if err != nil {
-				return err
-			}
-
-			defer func() {
-				os.Remove(priKeyFileName)
-			}()
-
-			gpgCmd := exec.Command("gpg", "--import", priKeyFileName)
-			var out, errOut bytes.Buffer
-			gpgCmd.Stdout = &out
-			gpgCmd.Stderr = &errOut
-			err = gpgCmd.Run()
-
-			srcFile := "/Users/alekhya/workspace/airship/sops/encrypted-secret.yaml"
-			DstFile := "/Users/alekhya/workspace/airship/sops/decrypted-secret.yaml"
-
-			keySvc := keyservice.NewLocalClient()
-			tree, err := common.LoadEncryptedFileWithBugFixes(common.GenericDecryptOpts{
-				Cipher:      aes.NewCipher(),
-				InputStore: common.DefaultStoreForPathOrFormat(srcFile, "yaml"),
-				InputPath:   srcFile,
-				KeyServices: []keyservice.KeyServiceClient{keySvc},
-			})
-			if err != nil {
-				return err
-			}
-
-			_, err = common.DecryptTree(common.DecryptTreeOpts{
-				Tree:    tree,
-				KeyServices: []keyservice.KeyServiceClient{keySvc},
-				Cipher:  aes.NewCipher(),
-
-			})
-			if err != nil {
-				return err
-			}
-
-			dstStore := common.DefaultStoreForPath(DstFile)
-			output, err := dstStore.EmitPlainFile(tree.Branches)
-			if err != nil {
-				return err
-			}
-
-			err = ioutil.WriteFile(DstFile, output, 0644)
-			if err != nil {
-				return err
-			}
-
-			// TODO: Import encryption and decryption keys locally
-
-			// TODO: Run encrypt from the sops
-
-			// TODO: Add test cases
+			fmt.Fprint(os.Stdout, "successfully decrypted secrets\n")
 			return nil
 		},
 	}
 
+	decryptCmd.Flags().StringVarP(&srcFile, "from-file", "f", "",
+		"SOPS encrypted secret file")
+	decryptCmd.Flags().StringVarP(&dstFile, "to-file", "t", "",
+		"decrypted secret file")
+
 	return decryptCmd
+}
+
+func decryptSecret(rootSettings *environment.AirshipCTLSettings, factory client.Factory, srcFile string, dstFile string) error {
+
+	err := validateFiles(srcFile, dstFile)
+	if err != nil {
+		return err
+	}
+	kclient, err := factory(rootSettings)
+	if err != nil {
+		return err
+	}
+
+	priKeyFileName := fmt.Sprintf("%s/%s.pri", keyOutputDir, gpgkeyFileName)
+	//pubKeyFileName := fmt.Sprintf("/tmp/gpg/%s.pub", "docker-test")
+
+	secret, err := kclient.ClientSet().CoreV1().Secrets(ns).Get(gpgSecretName, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(priKeyFileName, secret.Data["pri_key"], 0644)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		os.Remove(priKeyFileName)
+	}()
+
+	gpgCmd := exec.Command("gpg", "--import", priKeyFileName)
+	var out, errOut bytes.Buffer
+	gpgCmd.Stdout = &out
+	gpgCmd.Stderr = &errOut
+	err = gpgCmd.Run()
+
+	fmt.Println(err)
+	fmt.Println("1. ", string(errOut.Bytes()))
+	fmt.Println("2. ", string(out.Bytes()))
+
+	keySvc := keyservice.NewLocalClient()
+	tree, err := common.LoadEncryptedFileWithBugFixes(common.GenericDecryptOpts{
+		Cipher:      aes.NewCipher(),
+		InputStore:  common.DefaultStoreForPathOrFormat(srcFile, "yaml"),
+		InputPath:   srcFile,
+		KeyServices: []keyservice.KeyServiceClient{keySvc},
+	})
+	if err != nil {
+		return err
+	}
+
+	_, err = common.DecryptTree(common.DecryptTreeOpts{
+		Tree:        tree,
+		KeyServices: []keyservice.KeyServiceClient{keySvc},
+		Cipher:      aes.NewCipher(),
+	})
+	if err != nil {
+		return err
+	}
+
+	dstStore := common.DefaultStoreForPath(dstFile)
+	output, err := dstStore.EmitPlainFile(tree.Branches)
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(dstFile, output, 0644)
+	if err != nil {
+		return err
+	}
+
+	// TODO: Import encryption and decryption keys locally
+
+	// TODO: Run encrypt from the sops
+
+	// TODO: Add test cases
+	return nil
+
 }
 
 // Config for generating keys.
@@ -265,5 +308,20 @@ func ensureNoMetadata(branch sops.TreeBranch) error {
 			return fmt.Errorf("file already encrypted")
 		}
 	}
+	return nil
+}
+
+func validateFiles(srcFile string, dstFile string) error {
+	if !(len(srcFile) == 0) && !(len(dstFile) == 0) {
+		if _, err := os.Stat(srcFile); os.IsNotExist(err) {
+			return fmt.Errorf(err.Error())
+		}
+		if _, err := os.Stat(dstFile); !os.IsNotExist(err) {
+			fmt.Fprint(os.Stdout, "Warning: Overriding "+dstFile+"\n")
+		}
+	} else {
+		return fmt.Errorf("Expecting from-file and to-file flags")
+	}
+
 	return nil
 }
